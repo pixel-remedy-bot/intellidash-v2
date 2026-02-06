@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
-import { WeatherQuerySchema } from '@/types/api'
 
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY
 
-// Cache duration: 10 minutes for weather data
-const CACHE_DURATION_MS = 10 * 60 * 1000
+const WeatherQuerySchema = z.object({
+  city: z.string().min(1).max(100),
+})
 
 interface OpenWeatherResponse {
   coord: { lon: number; lat: number }
@@ -33,7 +32,6 @@ interface OpenWeatherResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    // Check API key
     if (!OPENWEATHER_API_KEY) {
       return NextResponse.json(
         { error: 'OpenWeather API key not configured' },
@@ -41,53 +39,28 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Parse and validate query params
     const { searchParams } = new URL(request.url)
     const city = searchParams.get('city')
     
     const validationResult = WeatherQuerySchema.safeParse({ city })
     if (!validationResult.success) {
       return NextResponse.json(
-        { error: 'Invalid city parameter', details: validationResult.error.flatten() },
+        { error: 'Invalid city parameter' },
         { status: 400 }
       )
     }
 
     const validatedCity = validationResult.data.city
 
-    // Check cache - look for recent weather data for this location
-    const cachedWeather = await prisma.weather.findFirst({
-      where: {
-        location: { equals: validatedCity, mode: 'insensitive' },
-        lastUpdated: {
-          gte: new Date(Date.now() - CACHE_DURATION_MS)
-        }
-      },
-      orderBy: { lastUpdated: 'desc' }
-    })
-
-    if (cachedWeather) {
-      // Track API usage (cache hit)
-      await trackApiUsage('weather', 'openweather', true)
-      
-      return NextResponse.json({
-        location: cachedWeather.location,
-        temp: cachedWeather.temperature,
-        condition: cachedWeather.condition,
-        icon: cachedWeather.icon,
-        fetchedAt: cachedWeather.lastUpdated.toISOString(),
-        cached: true
-      })
-    }
-
-    // Fetch from OpenWeatherMap API
+    // Fetch from OpenWeatherMap API (no database cache)
     const apiUrl = new URL('https://api.openweathermap.org/data/2.5/weather')
     apiUrl.searchParams.set('q', validatedCity)
     apiUrl.searchParams.set('appid', OPENWEATHER_API_KEY)
     apiUrl.searchParams.set('units', 'metric')
 
     const response = await fetch(apiUrl.toString(), {
-      headers: { 'Accept': 'application/json' }
+      headers: { 'Accept': 'application/json' },
+      next: { revalidate: 600 } // Cache 10 min
     })
 
     if (!response.ok) {
@@ -97,42 +70,17 @@ export async function GET(request: NextRequest) {
           { status: 404 }
         )
       }
-      throw new Error(`OpenWeather API error: ${response.status} ${response.statusText}`)
+      throw new Error(`OpenWeather API error: ${response.status}`)
     }
 
     const data: OpenWeatherResponse = await response.json()
 
-    // Save to database
-    const weatherRecord = await prisma.weather.create({
-      data: {
-        location: data.name,
-        country: data.sys.country,
-        latitude: data.coord.lat,
-        longitude: data.coord.lon,
-        temperature: data.main.temp,
-        feelsLike: data.main.feels_like,
-        humidity: data.main.humidity,
-        pressure: data.main.pressure,
-        windSpeed: data.wind.speed,
-        windDirection: data.wind.deg,
-        visibility: data.visibility,
-        condition: data.weather[0]?.main || 'Unknown',
-        description: data.weather[0]?.description,
-        icon: `https://openweathermap.org/img/wn/${data.weather[0]?.icon}@2x.png`,
-        lastUpdated: new Date(),
-      }
-    })
-
-    // Track API usage (actual call)
-    await trackApiUsage('weather', 'openweather', false)
-
     return NextResponse.json({
-      location: weatherRecord.location,
-      temp: weatherRecord.temperature,
-      condition: weatherRecord.condition,
-      icon: weatherRecord.icon,
-      fetchedAt: weatherRecord.lastUpdated.toISOString(),
-      cached: false
+      location: data.name,
+      temp: Math.round(data.main.temp),
+      condition: data.weather[0]?.main || 'Unknown',
+      icon: `https://openweathermap.org/img/wn/${data.weather[0]?.icon}@2x.png`,
+      fetchedAt: new Date().toISOString(),
     })
 
   } catch (error) {
@@ -141,38 +89,5 @@ export async function GET(request: NextRequest) {
       { error: 'Failed to fetch weather data' },
       { status: 500 }
     )
-  }
-}
-
-async function trackApiUsage(
-  endpoint: string,
-  provider: string,
-  cached: boolean
-) {
-  try {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    await prisma.apiUsage.upsert({
-      where: {
-        endpoint_provider_date: {
-          endpoint: cached ? `${endpoint}-cache` : endpoint,
-          provider,
-          date: today
-        }
-      },
-      update: {
-        requests: { increment: 1 }
-      },
-      create: {
-        endpoint: cached ? `${endpoint}-cache` : endpoint,
-        provider,
-        date: today,
-        requests: 1
-      }
-    })
-  } catch (e) {
-    // Non-critical, just log
-    console.error('Failed to track API usage:', e)
   }
 }
