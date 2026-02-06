@@ -32,9 +32,10 @@ interface OpenWeatherResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    if (!OPENWEATHER_API_KEY) {
+    const apiKey = process.env.OPENWEATHER_API_KEY
+    if (!apiKey) {
       return NextResponse.json(
-        { error: 'OpenWeather API key not configured' },
+        { error: 'OpenWeather API key not configured', env: Object.keys(process.env).filter(k => k.includes('WEATHER') || k.includes('API')) },
         { status: 500 }
       )
     }
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
     // Fetch from OpenWeatherMap API (no database cache)
     const apiUrl = new URL('https://api.openweathermap.org/data/2.5/weather')
     apiUrl.searchParams.set('q', validatedCity)
-    apiUrl.searchParams.set('appid', OPENWEATHER_API_KEY)
+    apiUrl.searchParams.set('appid', apiKey)
     apiUrl.searchParams.set('units', 'metric')
 
     const response = await fetch(apiUrl.toString(), {
