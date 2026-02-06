@@ -1,65 +1,123 @@
-import Image from "next/image";
+'use client'
+
+import { DashboardLayout } from '@/components/dashboard/DashboardLayout'
+import { WeatherWidget } from '@/components/dashboard/WeatherWidget'
+import { NewsFeed } from '@/components/dashboard/NewsFeed'
+import { TrendingTopics } from '@/components/dashboard/TrendingTopics'
+import { useWeather, useNews, useTrending } from '@/hooks'
+import type { WeatherData, NewsItem, TrendingTopic } from '@/types'
+import type { NewsResponse, TrendingResponse } from '@/types/api'
+import { AlertCircle } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+
+// Helper to format relative time
+function formatTimeAgo(dateString: string): string {
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+  const diffDays = Math.floor(diffMs / 86400000)
+
+  if (diffMins < 1) return 'just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString()
+}
+
+// Map API weather response to component format
+function mapWeatherData(apiData: Awaited<ReturnType<typeof useWeather>>['data']): WeatherData | null {
+  if (!apiData) return null
+  return {
+    location: apiData.location,
+    temp: apiData.temp,
+    condition: apiData.condition,
+    icon: apiData.icon,
+  }
+}
+
+// Map API news response to component format
+function mapNewsData(apiData: NewsResponse | undefined): NewsItem[] {
+  if (!apiData?.items) return []
+  return apiData.items.map(item => ({
+    id: item.id,
+    title: item.title,
+    source: item.source,
+    time: formatTimeAgo(item.publishedAt),
+    url: item.url,
+  }))
+}
+
+// Map API trending response to component format
+function mapTrendingData(apiData: TrendingResponse | undefined): TrendingTopic[] {
+  if (!apiData?.topics) return []
+  return apiData.topics.map(topic => ({
+    id: topic.id,
+    name: topic.keyword.length > 50 ? topic.keyword.slice(0, 50) + '...' : topic.keyword,
+    trend: topic.growth ? `+${topic.growth.toFixed(1)}%` : '0%',
+  }))
+}
 
 export default function Home() {
+  const { 
+    data: weatherData, 
+    isLoading: weatherLoading, 
+    error: weatherError
+  } = useWeather('Warsaw')
+  
+  const { 
+    data: newsData, 
+    isLoading: newsLoading, 
+    error: newsError 
+  } = useNews({ category: 'ai', limit: 10 })
+  
+  const { 
+    data: trendingData, 
+    error: trendingError 
+  } = useTrending('artificial-intelligence')
+
+  const weather = mapWeatherData(weatherData)
+  const news = mapNewsData(newsData)
+  const trending = mapTrendingData(trendingData)
+
+  const hasError = weatherError || newsError || trendingError
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <DashboardLayout>
+      {/* Error Alert */}
+      {hasError && (
+        <div className="col-span-1 md:col-span-2 mb-4">
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error loading data</AlertTitle>
+            <AlertDescription>
+              {weatherError && `Weather: ${weatherError.message}. `}
+              {newsError && `News: ${newsError.message}. `}
+              {trendingError && `Trending: ${trendingError.message}`}
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
+
+      {/* Weather Widget */}
+      <WeatherWidget 
+        data={weather} 
+        isLoading={weatherLoading} 
+      />
+
+      {/* Trending Topics */}
+      <TrendingTopics 
+        topics={trending} 
+      />
+
+      {/* News Feed - Full Width */}
+      <div className="col-span-1 md:col-span-2">
+        <NewsFeed 
+          items={news} 
+          isLoading={newsLoading} 
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+      </div>
+    </DashboardLayout>
+  )
 }
